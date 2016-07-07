@@ -14,9 +14,8 @@ namespace FubuLight.Hosting.Owin
       var runtime = new FubuRuntime(registry);
       var host = new FubuOwinHost(runtime.Routes, runtime.Container);
 
-      app.UseOwin(pipeline =>
-      {
-        pipeline(next => host.Invoke);
+      app.UseOwin(pipeline => {
+          host.ApplyMiddleware(pipeline);
       });
     }
   }
