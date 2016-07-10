@@ -20,7 +20,6 @@ namespace FubuLight.Hosting.Owin
         private readonly IList<Route> _routes;
         private readonly IContainer _container;
 
-        public const string NESTED_CONTAINER_KEY = "fubu.NestedContainer";
         public const string ROUTE_DATA = "fubu.RouteData";
         public const string ACTION_RESULT = "fubu.ActionResult";
         public const string RESPONSE_BODY = "fubu.ResponseBody";
@@ -35,12 +34,38 @@ namespace FubuLight.Hosting.Owin
         {
             pipeline(SetNestedContainer);
             pipeline(RouteDataLookup);
+            pipeline(WriteResponse);
+            pipeline(GenerateResponseBody);
+            // handle transfers
+            // handle redirect responses
 
             // chance to set other middleware, such as authentication/authorization
 
+            // pipeline(HandleTransfer);
             pipeline(ExecuteRouteHandler);
-            pipeline(GenerateResponseBody);
-            pipeline(WriteResponse);
+
+            // post-route middleware
+        }
+
+        public Func<IDictionary<string, object>, Task> HandleTransfer(Func<IDictionary<string, object>, Task> next)
+        {
+            return async environment =>
+            {
+                if (!environment.ContainsKey("fubu.ActionResult"))
+                {
+                    await next(environment);
+                }
+
+                // if action result is null
+                //    await next(env);
+                // if action result is a transfer request
+                //    apply transfer data
+                while (true)
+                {
+                    await next(environment);
+                    //check if action result is 
+                }
+            };
         }
 
         public Func<IDictionary<string, object>, Task> SetNestedContainer(Func<IDictionary<string, object>, Task> next)
@@ -49,9 +74,10 @@ namespace FubuLight.Hosting.Owin
             {
                 using (var nestedContainer = _container.GetNestedContainer())
                 {
-                    environment[NESTED_CONTAINER_KEY] = nestedContainer;
+                    var nestedContainerKey = "fubu.NestedContainer";
+                    environment[nestedContainerKey] = nestedContainer;
                     await next(environment).ConfigureAwait(false);
-                    environment.Remove(NESTED_CONTAINER_KEY); //probably don't need to do this?
+                    environment.Remove(nestedContainerKey); //probably don't need to do this?
                 }
             };
         }
@@ -70,9 +96,8 @@ namespace FubuLight.Hosting.Owin
         {
             return environment =>
             {
-                var nestedContainer = environment[NESTED_CONTAINER_KEY].As<IContainer>();
-
-                var route = _routes.FirstOrDefault(routeInfo => routeInfo.Condition(environment));
+                var nestedContainer = environment.GetNestedContainer();
+                var route = environment.GetRouteData();
                 var handler = nestedContainer.GetInstance(route.HandlerType);
 
                 // create input object
@@ -85,26 +110,26 @@ namespace FubuLight.Hosting.Owin
 
         public Func<IDictionary<string, object>, Task> GenerateResponseBody(Func<IDictionary<string, object>, Task> next)
         {
-            return environment =>
+            return async environment =>
             {
-                var nestedContainer = environment[NESTED_CONTAINER_KEY].As<IContainer>();
+                await next(environment);
+                var nestedContainer = environment.GetNestedContainer();
                 var output = environment[ACTION_RESULT];
                 var renderer = nestedContainer.GetInstance<IRenderer>();
 
                 var response = renderer.ToResponseBody(environment, output);
                 environment[RESPONSE_BODY] = response;
-
-                return next(environment);
             };
         }
 
         public Func<IDictionary<string, object>, Task> WriteResponse(Func<IDictionary<string, object>, Task> next)
         {
-            return environment =>
+            return async environment =>
             {
-                var output = environment[RESPONSE_BODY].As<string>();
+                await next(environment);
 
-                return environment.WriteToBody(output);
+                var output = environment[RESPONSE_BODY].As<string>();
+                await environment.WriteToBody(output);
             };
         }
     }
